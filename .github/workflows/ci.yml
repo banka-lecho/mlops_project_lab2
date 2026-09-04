@@ -9,6 +9,9 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
 
+    env:
+      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vlm-api
+
     steps:
 
       - name: Checkout repository
@@ -23,14 +26,25 @@ jobs:
       - name: Build Docker image
         run: |
           docker build \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/vlm-api:latest \
-            -t ${{ secrets.DOCKERHUB_USERNAME }}/vlm-api:${{ github.sha }} \
+            -t $IMAGE:latest \
+            -t $IMAGE:${{ github.sha }} \
             .
+            
+      - name: Smoke import check
+        run: |
+          docker run --rm $IMAGE:${{ github.sha }} \
+            python -c "import src.api.main; print('import OK')"
 
+      - name: Run unit tests
+        run: |
+          docker run --rm $IMAGE:${{ github.sha }} sh -c "
+            pip install --quiet pytest httpx &&
+            pytest src/unit_tests/tests_api.py -v
+          "
+
+      # Пуш только после того, как образ прошёл проверки:
+      # в registry не должен попадать заведомо нерабочий latest.
       - name: Push Docker image
         run: |
-          docker push \
-            ${{ secrets.DOCKERHUB_USERNAME }}/vlm-api:latest
-
-          docker push \
-            ${{ secrets.DOCKERHUB_USERNAME }}/vlm-api:${{ github.sha }}
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}
