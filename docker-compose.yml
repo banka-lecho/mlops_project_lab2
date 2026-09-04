@@ -1,6 +1,11 @@
 services:
 
   api:
+    depends_on:
+      cassandra:
+        condition: service_healthy
+      cassandra-init:
+        condition: service_completed_successfully
     build:
       context: .
       dockerfile: Dockerfile
@@ -18,6 +23,7 @@ services:
     environment:
       CONFIG_PATH: /app/config.ini
       CHECKPOINT_PATH: /app/expirements/dog_emotion_efficientnet_best.pth
+      CASSANDRA_HOSTS: cassandra
 
     restart: unless-stopped
 
@@ -36,6 +42,18 @@ services:
       test: ["CMD-SHELL", "cqlsh -e 'describe cluster' >/dev/null 2>&1 || exit 1"]
       interval: 10s
       retries: 30
-      start_period: 60s     
+      start_period: 60s
+
+  cassandra-init:
+    image: cassandra:5.0
+    container_name: cassandra-init
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./src/db/schema.cql:/schema.cql:ro
+    command: cqlsh cassandra 9042 -f /schema.cql
+    restart: on-failure
+
 volumes:
   cassandra-data:

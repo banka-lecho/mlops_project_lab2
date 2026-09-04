@@ -7,10 +7,17 @@ from fastapi import FastAPI, HTTPException, Request, status, UploadFile, File
 from fastapi.responses import JSONResponse
 
 from src.logger import get_logger
-from .schemas import HealthResponse, ModelInfoResponse, PredictResponse
+from .schemas import (
+    HealthResponse,
+    ModelInfoResponse,
+    PredictResponse,
+    DatasetLoadRequest,
+    DatasetLoadResponse,
+)
 from src.model import classifier_service, ModelNotLoadedError
 
 from src.config import load_config, checkpoint_path
+from src.db.load_dataset import load_split
 
 logger = get_logger(__name__)
 
@@ -111,4 +118,28 @@ async def predict(
         predicted_class=predicted_class,
         probabilities=probabilities,
         process_time_ms=process_time
+    )
+
+
+@app.post("/admin/dataset", response_model=DatasetLoadResponse, tags=["admin"])
+async def load_dataset(request: DatasetLoadRequest):
+    """Заливает разбиение датасета в Cassandra."""
+    try:
+        loaded = load_split(split=request.split)
+    except (FileNotFoundError, ValueError) as exc:
+        logger.exception("Не удалось загрузить датасет")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        logger.exception("Ошибка загрузки датасета в Cassandra")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Ошибка загрузки датасета: {exc}",
+        )
+
+    return DatasetLoadResponse(
+        loaded_rows=loaded,
+        split=request.split or "все",
     )

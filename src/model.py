@@ -9,12 +9,10 @@ from PIL import Image
 from pathlib import Path
 from torchvision import transforms, models
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoProcessor, AutoModel
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, confusion_matrix, classification_report
 
 from src.logger import get_logger
-from src.config import target_path, images_path, checkpoint_path as config_checkpoint_path
+from src.config import split_path, images_path, checkpoint_path as config_checkpoint_path
 
 logger = get_logger(__name__)
 
@@ -97,11 +95,27 @@ class DogEmotionClassifierService:
         print(f"Используется устройство: {device}")
 
         df = pd.read_csv(csv_path)
-        train_df, val_df = train_test_split(
-            df, 
-            test_size=0.2, 
-            stratify=df['label'], 
-            random_state=42
+
+        if "split" not in df.columns:
+            raise ValueError(
+                f"В {csv_path} нет колонки split. "
+                f"Сначала выполните: python -m src.utils.split_dataset"
+            )
+
+        train_df = df[df["split"] == "train"]
+        val_df = df[df["split"] == "val"]
+
+        if train_df.empty or val_df.empty:
+            raise ValueError(
+                f"Пустая выборка в {csv_path}: "
+                f"train={len(train_df)}, val={len(val_df)}"
+            )
+
+        logger.info(
+            "Выборки: train=%s, val=%s (test=%s, не используется при обучении)",
+            len(train_df),
+            len(val_df),
+            (df["split"] == "test").sum(),
         )
 
         train_transform = transforms.Compose([
@@ -243,7 +257,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     train_parser = subparsers.add_parser("train", help="Обучить модель.")
     train_parser.add_argument(
         "--csv-path", type=Path, default=None,
-        help="Путь к CSV с таргетами (по умолчанию — из config.ini)."
+        help="CSV с разбиением на train/val/test (по умолчанию — из config.ini)."
     )
     train_parser.add_argument(
         "--img-path", type=Path, default=None,
@@ -275,7 +289,7 @@ def main():
     args = build_arg_parser().parse_args()
 
     if args.command == "train":
-        csv_path = args.csv_path or target_path()
+        csv_path = args.csv_path or split_path()
         img_path = args.img_path or images_path()
 
         service = DogEmotionClassifierService()

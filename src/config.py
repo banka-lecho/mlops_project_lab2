@@ -1,9 +1,24 @@
 import os
 import configparser
 from pathlib import Path
-
+from dataclasses import dataclass, field
 
 ROOT = Path(__file__).resolve().parent.parent
+
+@dataclass(frozen=True)
+class CassandraSettings:
+    # TODO:: Здесь потом надо заменить username, password на переменные окружения, а не на захардкоженные хуйни
+    hosts: list[str] = field(default_factory=lambda: os.getenv("CASSANDRA_HOSTS", "127.0.0.1").split(","))
+    port: int = int(os.getenv("CASSANDRA_PORT", 9042))
+    keyspace: str = os.getenv("CASSANDRA_KEYSPACE", "dog_emotion_keyspace")
+    username: str = os.getenv("CASSANDRA_USER", "cassandra")
+    password: str = os.getenv("CASSANDRA_PASSWORD", "cassandra")
+    connect_retries: int = 6
+    retry_delay_seconds: float = 20.0
+    request_timeout_seconds: float = 20.0
+
+def cassandra_settings() -> CassandraSettings:
+    return CassandraSettings()
 
 
 def config_path() -> Path:
@@ -94,3 +109,17 @@ def target_path(
     cfg = cfg or load_config()
 
     return resolve(cfg["DATA"]["csv_path"])
+
+
+def split_path(
+    cfg: configparser.ConfigParser = None
+) -> Path:
+    """Путь к CSV с разбиением на train/val/test."""
+    env = os.getenv("SPLIT_PATH")
+
+    if env:
+        return Path(env)
+
+    cfg = cfg or load_config()
+
+    return resolve(cfg["DATA"]["split_path"])
