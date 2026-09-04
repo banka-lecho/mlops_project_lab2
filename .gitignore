@@ -14,3 +14,8 @@ logs/
 # secrets
 gdrive-key.json
 *.gdrive-key.json
+
+# env / secrets
+.env
+.env.local
+secrets/

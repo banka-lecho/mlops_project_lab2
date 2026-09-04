@@ -20,3 +20,22 @@ services:
       CHECKPOINT_PATH: /app/expirements/dog_emotion_efficientnet_best.pth
 
     restart: unless-stopped
+
+  cassandra:
+    image: cassandra:5.0
+    container_name: cassandra-dev
+    ports: ["9042:9042"]
+    environment:
+      CASSANDRA_CLUSTER_NAME: dev-cluster
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      MAX_HEAP_SIZE: 1G    
+      HEAP_NEWSIZE: 256M
+    volumes: [cassandra-data:/var/lib/cassandra]
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      retries: 30
+      start_period: 60s     
+volumes:
+  cassandra-data:
