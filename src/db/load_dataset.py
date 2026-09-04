@@ -1,12 +1,11 @@
 import argparse
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
-from src.logger import get_logger
-from src.config import split_path, load_config
+from src.config import load_config, split_path
 from src.db.cassandra_client import cassandra_repository
+from src.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -25,8 +24,8 @@ def _relative_images_dir() -> str:
 
 
 def load_split(
-    csv_path: Optional[Path] = None,
-    split: Optional[str] = None,
+    csv_path: Path | None = None,
+    split: str | None = None,
     repository=None,
 ) -> int:
     """Загружает строки датасета в таблицу dataset."""
@@ -91,12 +90,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Загрузить разбиение датасета в Cassandra."
     )
     parser.add_argument(
-        "--csv-path", type=Path, default=None,
-        help="CSV с разбиением (по умолчанию — из config.ini)."
+        "--csv-path",
+        type=Path,
+        default=None,
+        help="CSV с разбиением (по умолчанию — из config.ini).",
     )
     parser.add_argument(
-        "--split", choices=SPLITS, default=None,
-        help="Загрузить только одну выборку; по умолчанию все."
+        "--split",
+        choices=SPLITS,
+        default=None,
+        help="Загрузить только одну выборку; по умолчанию все.",
     )
 
     return parser

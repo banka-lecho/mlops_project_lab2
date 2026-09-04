@@ -1,13 +1,15 @@
-import io
-import pytest
 import configparser
-from PIL import Image
+import io
+
+import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from src.api.main import app
 from src.model import classifier_service
 
 TEST_CLASSES = ["angry", "happy", "relaxed", "sad"]
+
 
 @pytest.fixture(autouse=True)
 def setup_mocks(monkeypatch):
@@ -17,21 +19,14 @@ def setup_mocks(monkeypatch):
     """
 
     dummy_cfg = configparser.ConfigParser()
-    dummy_cfg.read_dict({
-        "MODEL": {
-            "checkpoint_path": "test-checkpoint-path",
-            "device": "cpu"
-        }
-    })
-
-    monkeypatch.setattr(
-        "src.api.main.load_config",
-        lambda *args, **kwargs: dummy_cfg
+    dummy_cfg.read_dict(
+        {"MODEL": {"checkpoint_path": "test-checkpoint-path", "device": "cpu"}}
     )
 
+    monkeypatch.setattr("src.api.main.load_config", lambda *args, **kwargs: dummy_cfg)
+
     monkeypatch.setattr(
-        "src.api.main.checkpoint_path",
-        lambda cfg=None: "test-checkpoint-path"
+        "src.api.main.checkpoint_path", lambda cfg=None: "test-checkpoint-path"
     )
 
     def mock_load(checkpoint_path, device="cpu"):
@@ -55,7 +50,7 @@ def setup_mocks(monkeypatch):
 def client():
     """
     Создаем клиент поверх приложения.
-    Обязательно используем контекстный менеджер, 
+    Обязательно используем контекстный менеджер,
     чтобы принудительно запустить события lifespan.
     """
     with TestClient(app) as test_client:

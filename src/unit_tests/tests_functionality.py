@@ -1,9 +1,9 @@
-import os
 import csv
+import os
+from pathlib import Path
+
 import pytest
 import requests
-
-from pathlib import Path
 
 SMOKE_DIR = Path("tests/data/smoke")
 CONFIDENCE_THRESHOLD = 0.7
@@ -25,6 +25,7 @@ SMOKE_CASES = _load_smoke_cases()
 def base_url():
     return os.getenv("BASE_URL", "http://localhost:8000")
 
+
 def test_health(base_url):
     response = requests.get(f"{base_url}/health")
 
@@ -34,8 +35,8 @@ def test_health(base_url):
 
     assert data["status"] == "ok"
     assert data["model_loaded"] is True
-    
-    
+
+
 def test_model_info(base_url):
     response = requests.get(f"{base_url}/model/info")
 
@@ -48,13 +49,12 @@ def test_model_info(base_url):
     assert data["checkpoint_path"]
     assert data["classes"]
 
+
 def test_prediction(base_url):
     with open("tests/data/happy_dog.jpg", "rb") as image:
         response = requests.post(
             f"{base_url}/predict",
-            files={
-                "image": ("happy_dog.jpg", image, "image/jpeg")
-            }
+            files={"image": ("happy_dog.jpg", image, "image/jpeg")},
         )
 
     assert response.status_code == 200
@@ -66,12 +66,11 @@ def test_prediction(base_url):
 
     assert 0 <= data["process_time_ms"]
 
+
 def test_invalid_image(base_url):
     response = requests.post(
         f"{base_url}/predict",
-        files={
-            "image": ("not_an_image.txt", b"not an image", "text/plain")
-        }
+        files={"image": ("not_an_image.txt", b"not an image", "text/plain")},
     )
 
     assert response.status_code == 400
@@ -82,8 +81,7 @@ def test_invalid_image(base_url):
 def test_confident_prediction_per_class(base_url, image_name, expected_label):
     with open(SMOKE_DIR / image_name, "rb") as image:
         response = requests.post(
-            f"{base_url}/predict",
-            files={"image": (image_name, image, "image/jpeg")}
+            f"{base_url}/predict", files={"image": (image_name, image, "image/jpeg")}
         )
 
     assert response.status_code == 200

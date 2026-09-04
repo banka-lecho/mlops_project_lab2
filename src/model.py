@@ -1,36 +1,47 @@
-import os
-import torch
 import argparse
+import os
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-import torch.nn as nn
+import torch
 from PIL import Image
-from pathlib import Path
-from torchvision import transforms, models
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import f1_score, confusion_matrix, classification_report
+from sklearn.metrics import classification_report, confusion_matrix, f1_score
+from torch import nn
+from torch.utils.data import DataLoader, Dataset
+from torchvision import models, transforms
+from tqdm import tqdm
 
+from src.config import (
+    checkpoint_path as config_checkpoint_path,
+)
+from src.config import (
+    images_path,
+    split_path,
+)
 from src.logger import get_logger
-from src.config import split_path, images_path, checkpoint_path as config_checkpoint_path
 
 logger = get_logger(__name__)
+
 
 class ModelNotLoadedError(Exception):
     pass
 
+
 class DogEmotionDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, img_dir: str, transform=None, label2id: dict = None):
+    def __init__(
+        self, df: pd.DataFrame, img_dir: str, transform=None, label2id: dict = None
+    ):
         self.df = df.reset_index(drop=True)
         self.img_dir = img_dir
         self.transform = transform
-        
+
         if label2id is None:
-            unique_labels = sorted(self.df['label'].unique())
+            unique_labels = sorted(self.df["label"].unique())
             self.label2id = {label: i for i, label in enumerate(unique_labels)}
         else:
             self.label2id = label2id
-            
+
         self.id2label = {i: label for label, i in self.label2id.items()}
 
     def __len__(self):
@@ -38,16 +49,15 @@ class DogEmotionDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        img_path = os.path.join(self.img_dir, row['image_name'])
-        
+        img_path = os.path.join(self.img_dir, row["image_name"])
+
         image = Image.open(img_path).convert("RGB")
-        label_id = self.label2id[row['label']]
-        
+        label_id = self.label2id[row["label"]]
+
         if self.transform:
             image = self.transform(image)
-            
-        return image, label_id
 
+        return image, label_id
 
 
 class DogEmotionClassifierService:
@@ -59,14 +69,13 @@ class DogEmotionClassifierService:
         self.transform = None
         self.checkpoint_path = None
         self.is_ready = False
-        
+
     def create_model(self, num_classes: int, pretrained: bool = True):
         weights = models.EfficientNet_B0_Weights.DEFAULT if pretrained else None
         model = models.efficientnet_b0(weights=weights)
         in_features = model.classifier[1].in_features
         model.classifier[1] = nn.Linear(in_features, num_classes)
         return model
-
 
     def evaluate(self, model, val_loader, criterion, device):
         model.eval()
@@ -89,7 +98,6 @@ class DogEmotionClassifierService:
         total_loss = val_loss / len(val_loader.dataset)
         return total_loss, np.array(all_preds), np.array(all_targets)
 
-
     def train(self, csv_path: Path, img_path: Path, epochs: int):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Используется устройство: {device}")
@@ -107,8 +115,7 @@ class DogEmotionClassifierService:
 
         if train_df.empty or val_df.empty:
             raise ValueError(
-                f"Пустая выборка в {csv_path}: "
-                f"train={len(train_df)}, val={len(val_df)}"
+                f"Пустая выборка в {csv_path}: train={len(train_df)}, val={len(val_df)}"
             )
 
         logger.info(
@@ -118,31 +125,45 @@ class DogEmotionClassifierService:
             (df["split"] == "test").sum(),
         )
 
-        train_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.RandomHorizontalFlip(),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-
-        val_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-
-        train_dataset = DogEmotionDataset(train_df, img_dir=img_path, transform=train_transform)
-        val_dataset = DogEmotionDataset(
-            val_df, 
-            img_dir=img_path, 
-            transform=val_transform, 
-            label2id=train_dataset.label2id
+        train_transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomRotation(15),
+                transforms.ColorJitter(brightness=0.2, contrast=0.2),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
         )
 
-        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, num_workers=2)
-        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, num_workers=2)
+        val_transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
+
+        train_dataset = DogEmotionDataset(
+            train_df, img_dir=img_path, transform=train_transform
+        )
+        val_dataset = DogEmotionDataset(
+            val_df,
+            img_dir=img_path,
+            transform=val_transform,
+            label2id=train_dataset.label2id,
+        )
+
+        train_loader = DataLoader(
+            train_dataset, batch_size=32, shuffle=True, num_workers=2
+        )
+        val_loader = DataLoader(
+            val_dataset, batch_size=32, shuffle=False, num_workers=2
+        )
 
         model = self.create_model(num_classes=len(train_dataset.label2id)).to(device)
         criterion = nn.CrossEntropyLoss()
@@ -156,52 +177,68 @@ class DogEmotionClassifierService:
             running_loss = 0.0
             for images, labels in train_loader:
                 images, labels = images.to(device), labels.to(device)
-                
+
                 optimizer.zero_grad()
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 loss.backward()
                 optimizer.step()
-                
+
                 running_loss += loss.item() * images.size(0)
 
             scheduler.step()
             train_loss = running_loss / len(train_dataset)
 
-            val_loss, preds, targets = self.evaluate(model, val_loader, criterion, device)
+            val_loss, preds, targets = self.evaluate(
+                model, val_loader, criterion, device
+            )
             val_f1_weighted = f1_score(targets, preds, average="weighted")
             val_f1_macro = f1_score(targets, preds, average="macro")
 
-            print(f"Epoch [{epoch+1:02d}/{epochs}] | "
+            print(
+                f"Epoch [{epoch + 1:02d}/{epochs}] | "
                 f"Train Loss: {train_loss:.4f} | "
                 f"Val Loss: {val_loss:.4f} | "
                 f"Val F1 (Weighted): {val_f1_weighted:.4f} | "
-                f"Val F1 (Macro): {val_f1_macro:.4f}")
+                f"Val F1 (Macro): {val_f1_macro:.4f}"
+            )
 
             if val_f1_weighted > best_f1:
                 best_f1 = val_f1_weighted
-                torch.save({
-                    'model_state_dict': model.state_dict(),
-                    'label2id': train_dataset.label2id,
-                    'id2label': train_dataset.id2label
-                }, "dog_emotion_efficientnet_best.pth")
+                torch.save(
+                    {
+                        "model_state_dict": model.state_dict(),
+                        "label2id": train_dataset.label2id,
+                        "id2label": train_dataset.id2label,
+                    },
+                    "dog_emotion_efficientnet_best.pth",
+                )
 
-        print("\n" + "="*50)
+        print("\n" + "=" * 50)
         print("Обучение завершено. Оценка лучшей модели на валидации:")
-        print("="*50)
+        print("=" * 50)
 
-        checkpoint = torch.load("dog_emotion_efficientnet_best.pth", map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        _, best_preds, best_targets = self.evaluate(model, val_loader, criterion, device)
+        checkpoint = torch.load(
+            "dog_emotion_efficientnet_best.pth", map_location=device
+        )
+        model.load_state_dict(checkpoint["model_state_dict"])
+        _, best_preds, best_targets = self.evaluate(
+            model, val_loader, criterion, device
+        )
 
-        class_names = [train_dataset.id2label[i] for i in range(len(train_dataset.id2label))]
+        class_names = [
+            train_dataset.id2label[i] for i in range(len(train_dataset.id2label))
+        ]
 
         print("\n--- Classification Report ---")
         print(classification_report(best_targets, best_preds, target_names=class_names))
 
         cm = confusion_matrix(best_targets, best_preds)
-        cm_df = pd.DataFrame(cm, index=[f"True: {c}" for c in class_names], 
-                                columns=[f"Pred: {c}" for c in class_names])
+        cm_df = pd.DataFrame(
+            cm,
+            index=[f"True: {c}" for c in class_names],
+            columns=[f"Pred: {c}" for c in class_names],
+        )
         print("--- Confusion Matrix ---")
         print(cm_df)
 
@@ -213,19 +250,23 @@ class DogEmotionClassifierService:
         self.device = device if torch.cuda.is_available() else "cpu"
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
 
-        self.label2id = checkpoint['label2id']
-        self.id2label = checkpoint['id2label']
-            
+        self.label2id = checkpoint["label2id"]
+        self.id2label = checkpoint["id2label"]
+
         self.model = self.create_model(num_classes=len(self.label2id), pretrained=False)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.load_state_dict(checkpoint["model_state_dict"])
         self.model.to(self.device)
         self.model.eval()
 
-        self.transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        self.transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                ),
+            ]
+        )
         self.is_ready = True
 
     def predict(self, image: Image.Image):
@@ -234,14 +275,14 @@ class DogEmotionClassifierService:
             raise ModelNotLoadedError("Модель не загружена")
 
         tensor = self.transform(image.convert("RGB")).unsqueeze(0).to(self.device)
-            
+
         with torch.no_grad():
             outputs = self.model(tensor)
             probs = torch.softmax(outputs, dim=1)[0]
 
         class_probs = {self.id2label[i]: probs[i].item() for i in range(len(probs))}
         predicted_class = self.id2label[probs.argmax().item()]
-            
+
         return predicted_class, class_probs
 
 
@@ -256,30 +297,38 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     train_parser = subparsers.add_parser("train", help="Обучить модель.")
     train_parser.add_argument(
-        "--csv-path", type=Path, default=None,
-        help="CSV с разбиением на train/val/test (по умолчанию — из config.ini)."
+        "--csv-path",
+        type=Path,
+        default=None,
+        help="CSV с разбиением на train/val/test (по умолчанию — из config.ini).",
     )
     train_parser.add_argument(
-        "--img-path", type=Path, default=None,
-        help="Путь к директории с изображениями (по умолчанию — из config.ini)."
+        "--img-path",
+        type=Path,
+        default=None,
+        help="Путь к директории с изображениями (по умолчанию — из config.ini).",
     )
     train_parser.add_argument(
-        "--epochs", type=int, default=10,
-        help="Количество эпох обучения."
+        "--epochs", type=int, default=10, help="Количество эпох обучения."
     )
 
-    predict_parser = subparsers.add_parser("predict", help="Предсказать эмоцию по изображению.")
-    predict_parser.add_argument(
-        "--checkpoint", type=Path, default=None,
-        help="Путь к чекпоинту модели (.pth), по умолчанию — из config.ini."
+    predict_parser = subparsers.add_parser(
+        "predict", help="Предсказать эмоцию по изображению."
     )
     predict_parser.add_argument(
-        "--image", type=Path, required=True,
-        help="Путь к изображению для классификации."
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="Путь к чекпоинту модели (.pth), по умолчанию — из config.ini.",
     )
     predict_parser.add_argument(
-        "--device", default="cuda",
-        help="Устройство для инференса: cuda или cpu."
+        "--image",
+        type=Path,
+        required=True,
+        help="Путь к изображению для классификации.",
+    )
+    predict_parser.add_argument(
+        "--device", default="cuda", help="Устройство для инференса: cuda или cpu."
     )
 
     return parser
@@ -305,7 +354,9 @@ def main():
         predicted_class, class_probs = service.predict(image)
 
         print(f"Предсказанный класс: {predicted_class}")
-        for label, prob in sorted(class_probs.items(), key=lambda kv: kv[1], reverse=True):
+        for label, prob in sorted(
+            class_probs.items(), key=lambda kv: kv[1], reverse=True
+        ):
             print(f"  {label}: {prob:.4f}")
 
 

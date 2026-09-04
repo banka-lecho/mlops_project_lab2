@@ -1,16 +1,16 @@
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from cassandra.cluster import Cluster
 from cassandra import ConsistencyLevel
-from cassandra.query import BatchStatement, dict_factory
 from cassandra.auth import PlainTextAuthProvider
+from cassandra.cluster import Cluster
 from cassandra.concurrent import execute_concurrent_with_args
+from cassandra.query import BatchStatement, dict_factory
 
-from src.logger import get_logger
 from src.config import CassandraSettings, cassandra_settings
+from src.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -39,11 +39,11 @@ def _to_plain(value: Any) -> Any:
 class CassandraRepository:
     """Чтение и запись результатов работы модели."""
 
-    def __init__(self, settings: Optional[CassandraSettings] = None):
+    def __init__(self, settings: CassandraSettings | None = None):
         self._settings = settings
         self._cluster = None
         self._session = None
-        self._statements: Dict[str, Any] = {}
+        self._statements: dict[str, Any] = {}
 
     @property
     def is_ready(self) -> bool:
@@ -137,7 +137,7 @@ class CassandraRepository:
             raise CassandraNotConnectedError("Нет подключения к Cassandra")
 
         return self._session
-            
+
     def _prepare_statements(self) -> None:
         """
         Prepared statements: они инициализируются один раз, а значения
@@ -173,7 +173,7 @@ class CassandraRepository:
                     split, label, image_name, image_path, loaded_at
                 ) VALUES (?, ?, ?, ?, ?)
                 """
-            )
+            ),
         }
 
     def save_prediction(
@@ -181,11 +181,11 @@ class CassandraRepository:
         request_id: uuid.UUID,
         image_name: str,
         predicted_class: str,
-        probabilities: Dict[str, float],
+        probabilities: dict[str, float],
         process_time_ms: float,
         model_checkpoint: str,
         device: str,
-        created_at: Optional[datetime] = None,
+        created_at: datetime | None = None,
     ) -> datetime:
         """Записывает результат предсказания."""
         session = self._require_session()
@@ -216,16 +216,16 @@ class CassandraRepository:
         )
 
         session.execute(batch)
-        
+
         logger.info(
-                    "Результат предсказания сохранён в Cassandra: request_id=%s, класс=%s",
-                    request_id,
-                    predicted_class,
-                )
+            "Результат предсказания сохранён в Cassandra: request_id=%s, класс=%s",
+            request_id,
+            predicted_class,
+        )
 
         return created_at
 
-    def get_prediction(self, request_id: uuid.UUID) -> Optional[Dict[str, Any]]:
+    def get_prediction(self, request_id: uuid.UUID) -> dict[str, Any] | None:
         """Одно предсказание по идентификатору запроса."""
         session = self._require_session()
 
@@ -247,7 +247,7 @@ class CassandraRepository:
         label: str,
         image_name: str,
         image_path: str,
-        loaded_at: Optional[datetime] = None,
+        loaded_at: datetime | None = None,
     ) -> None:
         """Одна строка обучающего или валидационного набора."""
         session = self._require_session()
@@ -265,7 +265,7 @@ class CassandraRepository:
 
     def save_dataset_rows(
         self,
-        rows: List[Dict[str, Any]],
+        rows: list[dict[str, Any]],
         concurrency: int = 32,
     ) -> int:
         """Батчевая загрузка выборки."""
@@ -293,5 +293,6 @@ class CassandraRepository:
         )
 
         return sum(1 for success, _ in results if success)
+
 
 cassandra_repository = CassandraRepository()

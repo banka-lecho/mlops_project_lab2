@@ -36,7 +36,7 @@ mlops_project/
 
 ## 2. Installation
 
-Requirements: Python 3.9, `pip`.
+Requirements: Python 3.10, `pip`.
 
 ```bash
 git clone https://github.com/banka-lecho/mlops_project.git
@@ -166,7 +166,7 @@ docker compose up --build
 
 [`docker-compose.yml`](docker-compose.yml) mounts `./expirements` (checkpoint, read-only), `./data`, and `./logs`, and sets `CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth`. The API is exposed on `http://localhost:8000`.
 
-[`Dockerfile`](Dockerfile): `python:3.9-slim`, installs `requirements.txt`, copies `src/` and `config.ini`, runs `uvicorn src.api.main:app`.
+[`Dockerfile`](Dockerfile): `python:3.10-slim`, installs `requirements.txt`, copies `src/` and `config.ini`, runs `uvicorn src.api.main:app`.
 
 ## 9. CI/CD
 
