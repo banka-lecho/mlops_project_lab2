@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 class HealthResponse(BaseModel):
     status: str = Field(..., description="ok или degraded")
     model_loaded: bool
+    db_connected: bool = Field(
+        False, description="Установлено ли подключение к Cassandra"
+    )
 
 
 class ModelInfoResponse(BaseModel):

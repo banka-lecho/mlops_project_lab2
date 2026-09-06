@@ -140,7 +140,11 @@ def _predict(client, test_image, **params):
 def test_health_endpoint(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "model_loaded": True}
+    assert response.json() == {
+        "status": "ok",
+        "model_loaded": True,
+        "db_connected": True,
+    }
 
 
 def test_model_info_endpoint(client):

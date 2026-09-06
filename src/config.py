@@ -16,9 +16,9 @@ class CassandraSettings:
     keyspace: str = os.getenv("CASSANDRA_KEYSPACE", "dog_emotion_keyspace")
     username: str = os.getenv("CASSANDRA_USER", "cassandra")
     password: str = os.getenv("CASSANDRA_PASSWORD", "cassandra")
-    connect_retries: int = 6
-    retry_delay_seconds: float = 20.0
-    request_timeout_seconds: float = 20.0
+    connect_retries: int = int(os.getenv("CASSANDRA_CONNECT_RETRIES", 6))
+    retry_delay_seconds: float = float(os.getenv("CASSANDRA_RETRY_DELAY", 20.0))
+    request_timeout_seconds: float = float(os.getenv("CASSANDRA_REQUEST_TIMEOUT", 20.0))
 
 
 def cassandra_settings() -> CassandraSettings:

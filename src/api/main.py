@@ -1,4 +1,5 @@
 import io
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -43,6 +44,22 @@ def require_db() -> CassandraRepository:
     return cassandra_repository
 
 
+def _connect_database() -> None:
+    """
+    Подключение к Cassandra.
+
+    Вызывается в отдельном потоке: connect() блокирующий и делает ретраи
+    с паузами, а uvicorn начинает слушать порт только после завершения
+    lifespan-startup. Если ждать БД прямо здесь, health-check снаружи
+    получает reset соединения всё время, пока идут попытки.
+    """
+    try:
+        cassandra_repository.connect()
+        logger.info("Подключение к Cassandra установлено")
+    except Exception:
+        logger.exception("Cassandra недоступна, предсказания сохраняться не будут")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Артефакт грузится один раз при старте."""
@@ -57,13 +74,16 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Ошибка загрузки модели: %s", ckpt_path)
 
-    try:
-        cassandra_repository.connect()
-        logger.info("Подключение к Cassandra установлено")
-    except Exception:
-        logger.exception("Cassandra недоступна, предсказания сохраняться не будут")
+    db_thread = threading.Thread(
+        target=_connect_database,
+        name="cassandra-connect",
+        daemon=True,
+    )
+    db_thread.start()
 
     yield
+
+    db_thread.join(timeout=5.0)
     cassandra_repository.shutdown()
     logger.info("Остановка сервиса и БД, очистка ресурсов.")
 
@@ -94,6 +114,7 @@ async def health():
     return HealthResponse(
         status="ok" if classifier_service.is_ready else "degraded",
         model_loaded=classifier_service.is_ready,
+        db_connected=cassandra_repository.is_ready,
     )
 
 
