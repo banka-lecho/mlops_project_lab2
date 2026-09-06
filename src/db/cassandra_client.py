@@ -24,12 +24,7 @@ class CassandraSchemaError(Exception):
 
 
 def _to_plain(value: Any) -> Any:
-    """
-    Приводит типы драйвера к обычным питоновским.
-
-    Драйвер отдаёт колонку типа `date` объектом cassandra.util.Date,
-    который FastAPI сериализовать не умеет.
-    """
+    """Приводит типы драйвера к обычным питоновским."""
     if hasattr(value, "date") and not isinstance(value, datetime):
         return value.date()
 

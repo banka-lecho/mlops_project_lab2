@@ -1,7 +1,20 @@
 name: CD
 
 on:
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "Tag of the image to run functional tests against"
+        type: string
+        required: false
+        default: latest
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Tag of the image to run functional tests against"
+        type: string
+        required: false
+        default: latest
   schedule:
     - cron: "0 3 * * *"
 
@@ -10,14 +23,41 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    env:
+      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/big-data-lab2:${{ inputs.image_tag || 'latest' }}
+      NETWORK: emotion-net
+      CASSANDRA_CONTAINER: cassandra-ci
+
     steps:
 
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Pull Docker image
         run: |
-          docker pull shpilevaanastasiya/vlm-api:latest
+          docker pull $IMAGE
+
+      - name: Create Docker network
+        run: |
+          docker network create $NETWORK
+
+      - name: Start Cassandra
+        run: |
+          docker run -d \
+            --name $CASSANDRA_CONTAINER \
+            --network $NETWORK \
+            -e CASSANDRA_CLUSTER_NAME=ci-cluster \
+            -e CASSANDRA_DC=datacenter1 \
+            -e CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch \
+            -e MAX_HEAP_SIZE=1G \
+            -e HEAP_NEWSIZE=256M \
+            cassandra:5.0
 
       - name: Install DVC (Google Drive support)
         run: |
@@ -37,14 +77,38 @@ jobs:
         run: |
           dvc pull expirements/dog_emotion_efficientnet_best.pth.dvc
 
+      - name: Wait for Cassandra
+        run: |
+          for i in $(seq 1 60); do
+            if docker exec $CASSANDRA_CONTAINER cqlsh -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
+              echo "Cassandra готова (попытка $i)"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Cassandra не поднялась"
+          docker logs $CASSANDRA_CONTAINER
+          exit 1
+
+      - name: Apply Cassandra schema
+        run: |
+          docker cp src/db/schema.cql $CASSANDRA_CONTAINER:/schema.cql
+          docker exec $CASSANDRA_CONTAINER cqlsh -f /schema.cql
+          docker exec $CASSANDRA_CONTAINER cqlsh -e "DESCRIBE KEYSPACE dog_emotion_keyspace" >/dev/null
+
       - name: Start container
         run: |
           docker run -d \
             --name emotion-api \
+            --network $NETWORK \
             -p 8000:8000 \
             -v "${{ github.workspace }}/expirements:/app/expirements:ro" \
             -e CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth \
-            shpilevaanastasiya/vlm-api:latest
+            -e CASSANDRA_HOSTS=$CASSANDRA_CONTAINER \
+            -e CASSANDRA_PORT=9042 \
+            -e CASSANDRA_KEYSPACE=dog_emotion_keyspace \
+            $IMAGE
 
       - name: Wait for API
         run: |
@@ -56,6 +120,21 @@ jobs:
           done
 
           echo "API did not start"
+          docker logs emotion-api
+          exit 1
+
+      - name: Wait for Cassandra connection in API
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:8000/health | grep -q '"db_connected":true'; then
+              echo "API подключился к Cassandra"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "API не подключился к Cassandra"
+          curl -s http://localhost:8000/health || true
           docker logs emotion-api
           exit 1
 
@@ -71,9 +150,11 @@ jobs:
         if: always()
         run: |
           docker logs emotion-api || true
+          docker logs $CASSANDRA_CONTAINER || true
 
-      - name: Stop container
+      - name: Stop containers
         if: always()
         run: |
-          docker stop emotion-api || true
-          docker rm emotion-api || true
+          docker rm -f emotion-api || true
+          docker rm -f $CASSANDRA_CONTAINER || true
+          docker network rm $NETWORK || true
