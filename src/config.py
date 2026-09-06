@@ -117,7 +117,7 @@ def checkpoint_path(cfg: configparser.ConfigParser | None = None) -> Path:
 
 
 def images_path(cfg: configparser.ConfigParser | None = None) -> Path:
-    """Путь к изображениям."""
+    """Путь к изображениям"""
     env = os.getenv("IMAGES_PATH")
 
     if env:
