@@ -69,3 +69,5 @@ urllib3==2.6.3
 uvicorn==0.30.0
 wcwidth==0.8.2
 zipp==3.23.1
+pytest==9.1.1
+httpx==0.28.1

@@ -1,5 +1,4 @@
 import configparser
-import inspect
 import io
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +8,6 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from src.api.main import app
-from src.db.cassandra_client import CassandraRepository
 from src.model import classifier_service
 
 TEST_CLASSES = ["angry", "happy", "relaxed", "sad"]

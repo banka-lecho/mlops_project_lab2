@@ -17,7 +17,7 @@ jobs:
 
       - name: Pull Docker image
         run: |
-          docker pull shpilevaanastasiya/vlm-api:latest
+          docker pull shpilevaanastasiya/big-data-lab2:latest
 
       - name: Install DVC (Google Drive support)
         run: |
@@ -44,7 +44,7 @@ jobs:
             -p 8000:8000 \
             -v "${{ github.workspace }}/expirements:/app/expirements:ro" \
             -e CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth \
-            shpilevaanastasiya/vlm-api:latest
+            shpilevaanastasiya/big-data-lab2:latest
 
       - name: Wait for API
         run: |

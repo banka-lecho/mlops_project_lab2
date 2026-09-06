@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/vlm-api
+      IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/big-data-lab2
 
     steps:
 
@@ -42,8 +42,6 @@ jobs:
             pytest src/unit_tests/tests_api.py -v
           "
 
-      # Пуш только после того, как образ прошёл проверки:
-      # в registry не должен попадать заведомо нерабочий latest.
       - name: Push Docker image
         run: |
           docker push $IMAGE:latest
