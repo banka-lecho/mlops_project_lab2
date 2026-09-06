@@ -15,3 +15,8 @@ notebooks/
 *.ipynb
 
 .dvc/cache/
+
+# secrets
+.env
+.env.*
+!.env.example

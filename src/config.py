@@ -3,26 +3,63 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 ROOT = Path(__file__).resolve().parent.parent
+
+load_dotenv(ROOT / ".env", override=False)
+
+
+class MissingSettingError(RuntimeError):
+    """Обязательная переменная окружения не задана."""
+
+
+def required_env(name: str) -> str:
+    """Значение обязательной переменной окружения."""
+    value = os.getenv(name, "").strip()
+
+    if not value:
+        raise MissingSettingError(
+            f"Переменная окружения {name} не задана. "
+            f"Скопируйте .env.example в .env и заполните значения "
+            f"(в CI/CD — GitHub Secrets)."
+        )
+
+    return value
 
 
 @dataclass(frozen=True)
 class CassandraSettings:
-    # TODO:: Здесь потом надо заменить username, password на переменные окружения, а не на захардкоженные хуйни
-    hosts: list[str] = field(
-        default_factory=lambda: os.getenv("CASSANDRA_HOSTS", "127.0.0.1").split(",")
-    )
-    port: int = int(os.getenv("CASSANDRA_PORT", 9042))
-    keyspace: str = os.getenv("CASSANDRA_KEYSPACE", "dog_emotion_keyspace")
-    username: str = os.getenv("CASSANDRA_USER", "cassandra")
-    password: str = os.getenv("CASSANDRA_PASSWORD", "cassandra")
-    connect_retries: int = int(os.getenv("CASSANDRA_CONNECT_RETRIES", 6))
-    retry_delay_seconds: float = float(os.getenv("CASSANDRA_RETRY_DELAY", 20.0))
-    request_timeout_seconds: float = float(os.getenv("CASSANDRA_REQUEST_TIMEOUT", 20.0))
+    """Параметры подключения к Cassandra."""
+
+    hosts: list[str]
+    port: int
+    keyspace: str
+    username: str = field(repr=False)
+    password: str = field(repr=False)
+    connect_retries: int = 6
+    retry_delay_seconds: float = 20.0
+    request_timeout_seconds: float = 20.0
 
 
 def cassandra_settings() -> CassandraSettings:
-    return CassandraSettings()
+    """Настройки подключения к БД из переменных окружения."""
+    hosts = [
+        host.strip()
+        for host in required_env("CASSANDRA_HOSTS").split(",")
+        if host.strip()
+    ]
+
+    return CassandraSettings(
+        hosts=hosts,
+        port=int(required_env("CASSANDRA_PORT")),
+        keyspace=required_env("CASSANDRA_KEYSPACE"),
+        username=required_env("CASSANDRA_USER"),
+        password=required_env("CASSANDRA_PASSWORD"),
+        connect_retries=int(os.getenv("CASSANDRA_CONNECT_RETRIES", "6")),
+        retry_delay_seconds=float(os.getenv("CASSANDRA_RETRY_DELAY", "20.0")),
+        request_timeout_seconds=float(os.getenv("CASSANDRA_REQUEST_TIMEOUT", "20.0")),
+    )
 
 
 def config_path() -> Path:

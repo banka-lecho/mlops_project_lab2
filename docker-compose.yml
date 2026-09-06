@@ -13,24 +13,26 @@ services:
     container_name: emotion-prediction-api
 
     ports:
-      - "8000:8000"
+      - "${API_PORT}:8000"
 
     volumes:
       - ./expirements:/app/expirements:ro
       - ./data:/app/data:ro
       - ./logs:/app/logs
 
+    env_file:
+      - .env
+
     environment:
       CONFIG_PATH: /app/config.ini
       CHECKPOINT_PATH: /app/expirements/dog_emotion_efficientnet_best.pth
-      CASSANDRA_HOSTS: cassandra
 
     restart: unless-stopped
 
   cassandra:
     image: cassandra:5.0
     container_name: cassandra-dev
-    ports: [ "9042:9042" ]
+    ports: [ "${CASSANDRA_PORT}:9042" ]
     environment:
       CASSANDRA_CLUSTER_NAME: dev-cluster
       CASSANDRA_DC: datacenter1
@@ -52,7 +54,7 @@ services:
         condition: service_healthy
     volumes:
       - ./src/db/schema.cql:/schema.cql:ro
-    command: cqlsh cassandra 9042 -f /schema.cql
+    command: cqlsh ${CASSANDRA_HOSTS} 9042 -f /schema.cql
     restart: on-failure
 
 volumes:

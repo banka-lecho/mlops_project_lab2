@@ -17,7 +17,8 @@ gdrive-key.json
 
 # env / secrets
 .env
-.env.local
+.env.*
+!.env.example
 secrets/
 
 pyproject.toml

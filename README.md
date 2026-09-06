@@ -66,6 +66,34 @@ checkpoint_path = expirements/dog_emotion_efficientnet_best.pth
 device = cpu
 ```
 
+### Secrets and connection settings
+
+No credentials, database host/port or access tokens are stored in the source code. Everything sensitive comes from **environment variables**; `config.ini` holds only non-sensitive paths.
+
+```bash
+cp .env.example .env      # then fill in the values
+```
+
+[`.env.example`](.env.example) is the committed template; `.env` itself is gitignored (and excluded from the Docker image via `.dockerignore`), so real values never reach the repository.
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `CASSANDRA_HOSTS` | yes | Comma-separated hosts. `cassandra` (compose service name) for `docker compose`, `127.0.0.1` when the API runs on the host |
+| `CASSANDRA_PORT` | yes | CQL port |
+| `CASSANDRA_KEYSPACE` | yes | Keyspace name (`dog_emotion_keyspace` in [`schema.cql`](src/db/schema.cql)) |
+| `CASSANDRA_USER` | yes | Database login |
+| `CASSANDRA_PASSWORD` | yes | Database password |
+| `CASSANDRA_CONNECT_RETRIES` / `CASSANDRA_RETRY_DELAY` / `CASSANDRA_REQUEST_TIMEOUT` | no | Connection retry tuning |
+| `API_PORT` | yes (compose) | Host port the API is published on |
+
+[`src/config.py`](src/config.py) loads `.env` via `python-dotenv` (real environment variables win over the file) and raises `MissingSettingError` if a required variable is absent — there is no fallback default for a login, a password or a host. The password is excluded from `CassandraSettings.__repr__`, so it cannot leak into logs or tracebacks.
+
+Running something outside compose, against a local Cassandra:
+
+```bash
+CASSANDRA_HOSTS=127.0.0.1 python -m src.db.load_dataset
+```
+
 ## 3. Dataset
 
 - **Source files** (DVC-tracked): [`data/dataset.csv`](data/dataset.csv), [`data/clean_dataset.csv`](data/clean_dataset.csv), [`data/images/`](data/images).
@@ -164,7 +192,7 @@ If the model failed to load, `/model/info` and `/predict` return **503** (`Model
 docker compose up --build
 ```
 
-[`docker-compose.yml`](docker-compose.yml) mounts `./expirements` (checkpoint, read-only), `./data`, and `./logs`, and sets `CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth`. The API is exposed on `http://localhost:8000`.
+[`docker-compose.yml`](docker-compose.yml) mounts `./expirements` (checkpoint, read-only), `./data`, and `./logs`, and sets `CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth`. Database credentials, host and port are injected from `.env` (`env_file:`), not written in the compose file; the API is exposed on `http://localhost:${API_PORT}` (`8000` by default). Create `.env` from `.env.example` before `docker compose up`.
 
 [`Dockerfile`](Dockerfile): `python:3.10-slim`, installs `requirements.txt`, copies `src/` and `config.ini`, runs `uvicorn src.api.main:app`.
 
@@ -180,7 +208,9 @@ Two GitHub Actions workflows:
   4. Runs functional tests ([`src/unit_tests/tests_functionality.py`](src/unit_tests/tests_functionality.py)) against the live container.
   5. Always dumps container logs and tears the container down.
 
-Required GitHub Secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `GDRIVE_CLIENT_SECRET`, `GDRIVE_CREDENTIALS_DATA`.
+Required GitHub Secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `GDRIVE_CLIENT_SECRET`, `GDRIVE_CREDENTIALS_DATA`, `CASSANDRA_USER`, `CASSANDRA_PASSWORD`.
+
+CI/CD never writes a secret into a file in the repository: Docker Hub credentials go to `docker/login-action`, the DVC client secret is applied with `dvc remote modify --local` (which writes to the gitignored `.dvc/config.local`), and the database login/password are passed to the container as `-e` environment variables. GitHub masks all of them in the workflow log.
 
 ## 10. DVC
 

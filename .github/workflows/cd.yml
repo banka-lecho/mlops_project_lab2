@@ -27,6 +27,8 @@ jobs:
       IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/big-data-lab2:${{ inputs.image_tag || 'latest' }}
       NETWORK: emotion-net
       CASSANDRA_CONTAINER: cassandra-ci
+      CASSANDRA_PORT: 9042
+      CASSANDRA_KEYSPACE: dog_emotion_keyspace
 
     steps:
 
@@ -106,8 +108,10 @@ jobs:
             -v "${{ github.workspace }}/expirements:/app/expirements:ro" \
             -e CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth \
             -e CASSANDRA_HOSTS=$CASSANDRA_CONTAINER \
-            -e CASSANDRA_PORT=9042 \
-            -e CASSANDRA_KEYSPACE=dog_emotion_keyspace \
+            -e CASSANDRA_PORT=$CASSANDRA_PORT \
+            -e CASSANDRA_KEYSPACE=$CASSANDRA_KEYSPACE \
+            -e CASSANDRA_USER="${{ secrets.CASSANDRA_USER }}" \
+            -e CASSANDRA_PASSWORD="${{ secrets.CASSANDRA_PASSWORD }}" \
             $IMAGE
 
       - name: Wait for API
