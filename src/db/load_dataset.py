@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.config import load_config, split_path
+from src.config import load_config, path_from_config
 from src.db.cassandra_client import cassandra_repository
 from src.logger import get_logger
 
@@ -13,13 +13,7 @@ SPLITS = ("train", "val", "test")
 
 
 def _relative_images_dir() -> str:
-    """
-    Каталог изображений так, как он записан в config.ini.
-
-    В базу кладём относительный путь: абсолютный на хосте не совпадёт
-    с /app/data/images внутри контейнера и не воспроизведётся у другого
-    человека.
-    """
+    """Каталог изображений так, как он записан в config.ini."""
     return load_config()["DATA"]["images_path"].strip().rstrip("/")
 
 
@@ -32,7 +26,7 @@ def load_split(
     if split is not None and split not in SPLITS:
         raise ValueError(f"Неизвестная выборка {split!r}, ожидается одна из {SPLITS}")
 
-    csv_path = Path(csv_path) if csv_path else split_path()
+    csv_path = Path(csv_path) if csv_path else path_from_config("DATA", "split_path")
 
     if not csv_path.exists():
         raise FileNotFoundError(

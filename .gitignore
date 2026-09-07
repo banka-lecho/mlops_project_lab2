@@ -22,3 +22,4 @@ gdrive-key.json
 secrets/
 
 pyproject.toml
+requirements-dev.txt

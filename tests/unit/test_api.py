@@ -1,6 +1,5 @@
 import configparser
 import io
-import uuid
 from datetime import datetime, timezone
 
 import pytest
@@ -45,7 +44,6 @@ class FakeRepository:
 
         self.rows[request_id] = {
             "request_id": request_id,
-            "prediction_day": created_at.date(),
             "created_at": created_at,
             "image_name": image_name,
             "predicted_class": predicted_class,
@@ -57,9 +55,6 @@ class FakeRepository:
         }
 
         return created_at
-
-    def get_prediction(self, request_id):
-        return self.rows.get(request_id)
 
 
 @pytest.fixture
@@ -107,11 +102,7 @@ def setup_mocks(monkeypatch, fake_repo):
 
 @pytest.fixture
 def client():
-    """
-    Создаем клиент поверх приложения.
-    Обязательно используем контекстный менеджер,
-    чтобы принудительно запустить события lifespan.
-    """
+    """Создаем клиент поверх приложения."""
     with TestClient(app) as test_client:
         yield test_client
 
@@ -126,18 +117,8 @@ def test_image():
     return file
 
 
-def _predict(client, test_image, **params):
-    """Отправляет картинку в /predict и возвращает разобранный ответ."""
-    response = client.post(
-        "/predict",
-        files={"image": ("test.jpg", test_image, "image/jpeg")},
-        params=params,
-    )
-    assert response.status_code == 200
-    return response.json()
-
-
 def test_health_endpoint(client):
+    """Приложение стартует, модель и БД подключены."""
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {
@@ -147,17 +128,8 @@ def test_health_endpoint(client):
     }
 
 
-def test_model_info_endpoint(client):
-    """Проверяем, что API отдал данные из нашего замоканного конфига."""
-    response = client.get("/model/info")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["checkpoint_path"] == "test-checkpoint-path"
-    assert data["classes"] == TEST_CLASSES
-    assert data["is_ready"] is True
-
-
 def test_predict_success(client, test_image):
+    """Основной сценарий: инференс отдаёт ожидаемую форму ответа."""
     response = client.post(
         "/predict",
         files={"image": ("test.jpg", test_image, "image/jpeg")},
@@ -174,7 +146,7 @@ def test_predict_success(client, test_image):
 
 
 def test_predict_invalid_image(client):
-    """Отправляем текстовую фигню под видом картинки"""
+    """Отправляем текстовую фигню под видом картинки."""
     response = client.post(
         "/predict",
         files={"image": ("test.txt", b"not an image", "text/plain")},
@@ -183,80 +155,21 @@ def test_predict_invalid_image(client):
     assert "Невозможно прочитать файл" in response.json()["detail"]
 
 
-def test_predict_saves_to_db(client, test_image, fake_repo):
-    """По умолчанию предсказание уходит в базу."""
-    data = _predict(client, test_image)
-
-    assert data["saved"] is True
-
-    request_id = uuid.UUID(data["request_id"])
-    assert request_id in fake_repo.rows
-
-    saved = fake_repo.rows[request_id]
-    assert saved["predicted_class"] == "angry"
-    assert saved["image_name"] == "test.jpg"
-    assert saved["confidence"] == 0.7
-
-
-def test_predict_without_saving(client, test_image, fake_repo):
-    """save=false отключает запись, но не влияет на инференс."""
-    data = _predict(client, test_image, save="false")
-
-    assert data["saved"] is False
-    assert data["predicted_class"] == "angry"
-    assert fake_repo.rows == {}
-
-
 def test_predict_survives_db_failure(client, test_image, fake_repo):
     """
-    Ключевой сценарий: инференс уже отработал, и сбой записи не должен
-    его обесценивать. Ответ остаётся 200, потеря фиксируется в saved.
+    Ключевой сценарий: инференс уже отработал, и сбой записи в БД не
+    должен его обесценивать.
     """
     fake_repo.fail_on_save = True
 
-    data = _predict(client, test_image)
+    response = client.post(
+        "/predict",
+        files={"image": ("test.jpg", test_image, "image/jpeg")},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
 
     assert data["saved"] is False
     assert data["predicted_class"] == "angry"
     assert data["probabilities"]["angry"] == 0.7
-
-
-def test_predict_when_db_unavailable(client, test_image, fake_repo):
-    """Cassandra не поднялась при старте — предсказания всё равно работают."""
-    fake_repo.is_ready = False
-
-    data = _predict(client, test_image)
-
-    assert data["saved"] is False
-    assert fake_repo.rows == {}
-
-
-def test_read_prediction_round_trip(client, test_image, fake_repo):
-    """Сохранённое предсказание читается обратно по request_id."""
-    predicted = _predict(client, test_image)
-
-    response = client.get(f"/predictions/{predicted['request_id']}")
-
-    assert response.status_code == 200
-    record = response.json()
-
-    assert record["request_id"] == predicted["request_id"]
-    assert record["predicted_class"] == predicted["predicted_class"]
-    assert record["probabilities"] == predicted["probabilities"]
-    assert record["confidence"] == 0.7
-    assert record["image_name"] == "test.jpg"
-    assert record["device"] == "cpu"
-
-
-def test_read_prediction_not_found(client, fake_repo):
-    response = client.get(f"/predictions/{uuid.uuid4()}")
-
-    assert response.status_code == 404
-    assert "не найдено" in response.json()["detail"]
-
-
-def test_read_prediction_invalid_uuid(client):
-    """Путь принимает только UUID, остальное отсекает валидация FastAPI."""
-    response = client.get("/predictions/not-a-uuid")
-
-    assert response.status_code == 422

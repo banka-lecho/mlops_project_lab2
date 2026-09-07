@@ -23,10 +23,6 @@ services:
     env_file:
       - .env
 
-    environment:
-      CONFIG_PATH: /app/config.ini
-      CHECKPOINT_PATH: /app/expirements/dog_emotion_efficientnet_best.pth
-
     restart: unless-stopped
 
   cassandra:

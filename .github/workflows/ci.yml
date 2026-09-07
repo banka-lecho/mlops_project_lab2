@@ -39,7 +39,7 @@ jobs:
         run: |
           docker run --rm $IMAGE:${{ github.sha }} sh -c "
             pip install --quiet pytest httpx &&
-            pytest src/unit_tests/tests_api.py -v
+            pytest tests/unit/test_api.py -v
           "
 
       - name: Push Docker image

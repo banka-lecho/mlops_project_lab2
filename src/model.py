@@ -12,13 +12,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import models, transforms
 from tqdm import tqdm
 
-from src.config import (
-    checkpoint_path as config_checkpoint_path,
-)
-from src.config import (
-    images_path,
-    split_path,
-)
+from src.config import checkpoint_path, path_from_config
 from src.logger import get_logger
 
 logger = get_logger(__name__)
@@ -30,7 +24,7 @@ class ModelNotLoadedError(Exception):
 
 class DogEmotionDataset(Dataset):
     def __init__(
-        self, df: pd.DataFrame, img_dir: str, transform=None, label2id: dict = None
+        self, df: pd.DataFrame, img_dir: str, transform=None, label2id: dict | None = None
     ):
         self.df = df.reset_index(drop=True)
         self.img_dir = img_dir
@@ -338,14 +332,14 @@ def main():
     args = build_arg_parser().parse_args()
 
     if args.command == "train":
-        csv_path = args.csv_path or split_path()
-        img_path = args.img_path or images_path()
+        csv_path = args.csv_path or path_from_config("DATA", "split_path")
+        img_path = args.img_path or path_from_config("DATA", "images_path")
 
         service = DogEmotionClassifierService()
         service.train(csv_path=csv_path, img_path=img_path, epochs=args.epochs)
 
     elif args.command == "predict":
-        ckpt_path = args.checkpoint or config_checkpoint_path()
+        ckpt_path = args.checkpoint or checkpoint_path()
 
         service = DogEmotionClassifierService()
         service.load(checkpoint_path=str(ckpt_path), device=args.device)

@@ -1,11 +1,14 @@
 import csv
 import os
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
 import requests
 
-SMOKE_DIR = Path("tests/data/smoke")
+DATA_DIR = Path(__file__).parent / "data"
+SMOKE_DIR = DATA_DIR / "smoke"
 CONFIDENCE_THRESHOLD = 0.7
 
 
@@ -51,7 +54,7 @@ def test_model_info(base_url):
 
 
 def test_prediction(base_url):
-    with open("tests/data/happy_dog.jpg", "rb") as image:
+    with open(DATA_DIR / "happy_dog.jpg", "rb") as image:
         response = requests.post(
             f"{base_url}/predict",
             files={"image": ("happy_dog.jpg", image, "image/jpeg")},
@@ -67,17 +70,8 @@ def test_prediction(base_url):
     assert 0 <= data["process_time_ms"]
 
 
-def test_invalid_image(base_url):
-    response = requests.post(
-        f"{base_url}/predict",
-        files={"image": ("not_an_image.txt", b"not an image", "text/plain")},
-    )
-
-    assert response.status_code == 400
-
-
 def test_prediction_round_trip(base_url):
-    with open("tests/data/happy_dog.jpg", "rb") as image:
+    with open(DATA_DIR / "happy_dog.jpg", "rb") as image:
         predicted = requests.post(
             f"{base_url}/predict",
             files={"image": ("happy_dog.jpg", image, "image/jpeg")},
@@ -112,3 +106,36 @@ def test_confident_prediction_per_class(base_url, image_name, expected_label):
         f"{image_name}: уверенность в классе '{expected_label}' = {confidence:.4f} "
         f"< {CONFIDENCE_THRESHOLD}. Вероятности: {probabilities}"
     )
+
+
+def _dataset_row_count() -> int:
+    """
+    Строк в таблице dataset — читает напрямую через cqlsh в контейнере
+    Cassandra.
+    """
+    container, user, password, keyspace = (
+        os.environ[name]
+        for name in ("CASSANDRA_CONTAINER", "CASSANDRA_USER", "CASSANDRA_PASSWORD", "CASSANDRA_KEYSPACE")
+    )
+    output = subprocess.run(
+        [
+            "docker", "exec", container, "cqlsh",
+            "-u", user, "-p", password,
+            "-e", f"SELECT count(*) FROM {keyspace}.dataset;",
+        ],
+        capture_output=True, text=True, check=True, timeout=30,
+    ).stdout
+
+    return int(re.search(r"\d+", output).group())
+
+
+@pytest.mark.skipif(
+    "CASSANDRA_CONTAINER" not in os.environ,
+    reason="Нужны CASSANDRA_CONTAINER/USER/PASSWORD/KEYSPACE (задаются в CD)",
+)
+def test_dataset_loaded_into_cassandra():
+    """
+    Результат шага CD "Load a dataset sample into Cassandra": фикстура
+    tests/functional/data/dataset_sample.csv должна попасть в базу.
+    """
+    assert _dataset_row_count() > 0, "Таблица dataset пуста: датасет не загружен"

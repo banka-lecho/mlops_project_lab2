@@ -19,6 +19,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src ./src
 COPY config.ini .
 
+COPY tests/unit ./tests/unit
+COPY conftest.py .
+
 RUN mkdir -p /app/expirements /app/data /app/logs
 
 EXPOSE 8000
