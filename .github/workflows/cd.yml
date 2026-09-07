@@ -29,6 +29,10 @@ jobs:
       CASSANDRA_CONTAINER: cassandra-ci
       CASSANDRA_PORT: 9042
       CASSANDRA_KEYSPACE: dog_emotion_keyspace
+      CASSANDRA_USER: ${{ secrets.CASSANDRA_USER }}
+      CASSANDRA_PASSWORD: ${{ secrets.CASSANDRA_PASSWORD }}
+      CASSANDRA_BOOTSTRAP_USER: ${{ secrets.CASSANDRA_BOOTSTRAP_USER }}
+      CASSANDRA_BOOTSTRAP_PASSWORD: ${{ secrets.CASSANDRA_BOOTSTRAP_PASSWORD }}
 
     steps:
 
@@ -49,7 +53,11 @@ jobs:
         run: |
           docker network create $NETWORK
 
-      - name: Start Cassandra
+      # Образ стартует с AllowAllAuthenticator: пароль не проверяется, а
+      # переменной окружения это не настраивается (entrypoint переносит в
+      # cassandra.yaml только фиксированный список CASSANDRA_*). Поэтому
+      # включаем проверку пароля и права ролей правкой конфига перед стартом.
+      - name: Start Cassandra with authentication enabled
         run: |
           docker run -d \
             --name $CASSANDRA_CONTAINER \
@@ -59,7 +67,12 @@ jobs:
             -e CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch \
             -e MAX_HEAP_SIZE=1G \
             -e HEAP_NEWSIZE=256M \
-            cassandra:5.0
+            cassandra:5.0 \
+            bash -c "sed -i \
+              -e 's/^authenticator:.*/authenticator: PasswordAuthenticator/' \
+              -e 's/^authorizer:.*/authorizer: CassandraAuthorizer/' \
+              /etc/cassandra/cassandra.yaml \
+              && exec /usr/local/bin/docker-entrypoint.sh cassandra -f"
 
       - name: Install DVC (Google Drive support)
         run: |
@@ -79,25 +92,22 @@ jobs:
         run: |
           dvc pull expirements/dog_emotion_efficientnet_best.pth.dvc
 
-      - name: Wait for Cassandra
-        run: |
-          for i in $(seq 1 60); do
-            if docker exec $CASSANDRA_CONTAINER cqlsh -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
-              echo "Cassandra готова (попытка $i)"
-              exit 0
-            fi
-            sleep 5
-          done
-
-          echo "Cassandra не поднялась"
-          docker logs $CASSANDRA_CONTAINER
-          exit 1
-
-      - name: Apply Cassandra schema
+      # Скрипт сам ждёт, пока станет доступен логин суперпользователя,
+      # применяет схему и заводит роль сервиса с правами только на keyspace.
+      - name: Apply schema and provision service role
         run: |
           docker cp src/db/schema.cql $CASSANDRA_CONTAINER:/schema.cql
-          docker exec $CASSANDRA_CONTAINER cqlsh -f /schema.cql
-          docker exec $CASSANDRA_CONTAINER cqlsh -e "DESCRIBE KEYSPACE dog_emotion_keyspace" >/dev/null
+          docker cp src/db/init_db.sh $CASSANDRA_CONTAINER:/init_db.sh
+
+          docker exec \
+            -e CASSANDRA_HOSTS=127.0.0.1 \
+            -e CASSANDRA_PORT=$CASSANDRA_PORT \
+            -e CASSANDRA_KEYSPACE=$CASSANDRA_KEYSPACE \
+            -e CASSANDRA_USER="$CASSANDRA_USER" \
+            -e CASSANDRA_PASSWORD="$CASSANDRA_PASSWORD" \
+            -e CASSANDRA_BOOTSTRAP_USER="$CASSANDRA_BOOTSTRAP_USER" \
+            -e CASSANDRA_BOOTSTRAP_PASSWORD="$CASSANDRA_BOOTSTRAP_PASSWORD" \
+            $CASSANDRA_CONTAINER bash /init_db.sh
 
       - name: Start container
         run: |
@@ -106,12 +116,13 @@ jobs:
             --network $NETWORK \
             -p 8000:8000 \
             -v "${{ github.workspace }}/expirements:/app/expirements:ro" \
+            -v "${{ github.workspace }}/data:/app/data:ro" \
             -e CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth \
             -e CASSANDRA_HOSTS=$CASSANDRA_CONTAINER \
             -e CASSANDRA_PORT=$CASSANDRA_PORT \
             -e CASSANDRA_KEYSPACE=$CASSANDRA_KEYSPACE \
-            -e CASSANDRA_USER="${{ secrets.CASSANDRA_USER }}" \
-            -e CASSANDRA_PASSWORD="${{ secrets.CASSANDRA_PASSWORD }}" \
+            -e CASSANDRA_USER="$CASSANDRA_USER" \
+            -e CASSANDRA_PASSWORD="$CASSANDRA_PASSWORD" \
             $IMAGE
 
       - name: Wait for API
@@ -131,7 +142,7 @@ jobs:
         run: |
           for i in {1..30}; do
             if curl -sf http://localhost:8000/health | grep -q '"db_connected":true'; then
-              echo "API подключился к Cassandra"
+              echo "API подключился к Cassandra под ролью сервиса"
               exit 0
             fi
             sleep 2
@@ -150,6 +161,84 @@ jobs:
         run: |
           pytest src/unit_tests/tests_functionality.py -v
 
+      # Доказательство, что БД действительно проверяет учётные данные,
+      # а не принимает любые: с AllowAllAuthenticator все три проверки
+      # ниже прошли бы успешно.
+      - name: Verify database rejects wrong credentials
+        run: |
+          echo "--- неверный пароль должен быть отвергнут"
+          if docker exec $CASSANDRA_CONTAINER \
+              cqlsh -u wrong_user -p wrong_password -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
+            echo "ОШИБКА: Cassandra приняла неверные учётные данные"
+            exit 1
+          fi
+          echo "OK: отказ в доступе"
+
+          echo "--- подключение без учётных данных должно быть отвергнуто"
+          if docker exec $CASSANDRA_CONTAINER \
+              cqlsh -e "DESCRIBE CLUSTER" >/dev/null 2>&1; then
+            echo "ОШИБКА: Cassandra приняла подключение без пароля"
+            exit 1
+          fi
+          echo "OK: отказ в доступе"
+
+      # Роль сервиса ограничена своим keyspace: system_auth хранит хеши
+      # паролей всех ролей, читать её сервису нельзя.
+      - name: Verify service role permissions are limited
+        run: |
+          echo "--- роль сервиса читает свой keyspace"
+          docker exec $CASSANDRA_CONTAINER cqlsh \
+            -u "$CASSANDRA_USER" -p "$CASSANDRA_PASSWORD" \
+            -e "SELECT count(*) FROM $CASSANDRA_KEYSPACE.predictions_by_id;"
+
+          echo "--- роль сервиса не читает system_auth.roles"
+          if docker exec $CASSANDRA_CONTAINER cqlsh \
+              -u "$CASSANDRA_USER" -p "$CASSANDRA_PASSWORD" \
+              -e "SELECT * FROM system_auth.roles;" >/dev/null 2>&1; then
+            echo "ОШИБКА: роль сервиса имеет лишние права"
+            exit 1
+          fi
+          echo "OK: Unauthorized"
+
+      # То же самое на уровне сервиса модели: с неверным паролем он
+      # не устанавливает соединение и честно сообщает об этом в /health.
+      - name: Verify API cannot reach database with wrong password
+        run: |
+          docker run -d \
+            --name emotion-api-bad-auth \
+            --network $NETWORK \
+            -p 8001:8000 \
+            -v "${{ github.workspace }}/expirements:/app/expirements:ro" \
+            -e CHECKPOINT_PATH=/app/expirements/dog_emotion_efficientnet_best.pth \
+            -e CASSANDRA_HOSTS=$CASSANDRA_CONTAINER \
+            -e CASSANDRA_PORT=$CASSANDRA_PORT \
+            -e CASSANDRA_KEYSPACE=$CASSANDRA_KEYSPACE \
+            -e CASSANDRA_USER="$CASSANDRA_USER" \
+            -e CASSANDRA_PASSWORD=definitely-not-the-right-password \
+            -e CASSANDRA_CONNECT_RETRIES=1 \
+            -e CASSANDRA_RETRY_DELAY=1 \
+            $IMAGE
+
+          for i in {1..45}; do
+            if docker logs emotion-api-bad-auth 2>&1 \
+                | grep -qE "AuthenticationFailed|Bad credentials"; then
+              echo "OK: Cassandra отвергла сервис с неверным паролем"
+              docker logs emotion-api-bad-auth 2>&1 | grep -E "AuthenticationFailed|Bad credentials" | head -1
+              break
+            fi
+
+            if [ "$i" -eq 45 ]; then
+              echo "ОШИБКА: в логах нет отказа аутентификации"
+              docker logs emotion-api-bad-auth
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "--- /health должен показывать db_connected=false"
+          curl -sf http://localhost:8001/health | tee /dev/stderr | grep -q '"db_connected":false'
+          echo "OK"
+
       - name: Show container logs
         if: always()
         run: |
@@ -160,5 +249,6 @@ jobs:
         if: always()
         run: |
           docker rm -f emotion-api || true
+          docker rm -f emotion-api-bad-auth || true
           docker rm -f $CASSANDRA_CONTAINER || true
           docker network rm $NETWORK || true

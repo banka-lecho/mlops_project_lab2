@@ -76,6 +76,19 @@ def test_invalid_image(base_url):
     assert response.status_code == 400
 
 
+def test_prediction_round_trip(base_url):
+    with open("tests/data/happy_dog.jpg", "rb") as image:
+        predicted = requests.post(
+            f"{base_url}/predict",
+            files={"image": ("happy_dog.jpg", image, "image/jpeg")},
+        ).json()
+    assert predicted["saved"] is True
+
+    record = requests.get(f"{base_url}/predictions/{predicted['request_id']}")
+    assert record.status_code == 200
+    assert record.json()["predicted_class"] == predicted["predicted_class"]
+
+
 @pytest.mark.skipif(not SMOKE_CASES, reason=f"Нет фикстуры {SMOKE_DIR}/expected.csv")
 @pytest.mark.parametrize("image_name,expected_label", SMOKE_CASES)
 def test_confident_prediction_per_class(base_url, image_name, expected_label):
