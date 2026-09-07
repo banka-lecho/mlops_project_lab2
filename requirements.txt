@@ -71,3 +71,4 @@ wcwidth==0.8.2
 zipp==3.23.1
 pytest==9.1.1
 httpx==0.28.1
+python-dotenv==1.2.3
