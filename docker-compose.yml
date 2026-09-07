@@ -33,15 +33,30 @@ services:
     image: cassandra:5.0
     container_name: cassandra-dev
     ports: [ "${CASSANDRA_PORT}:9042" ]
+
     environment:
       CASSANDRA_CLUSTER_NAME: dev-cluster
       CASSANDRA_DC: datacenter1
       CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
       MAX_HEAP_SIZE: 1G
       HEAP_NEWSIZE: 256M
+      CASSANDRA_BOOTSTRAP_USER: ${CASSANDRA_BOOTSTRAP_USER}
+      CASSANDRA_BOOTSTRAP_PASSWORD: ${CASSANDRA_BOOTSTRAP_PASSWORD}
+
+    command:
+      - bash
+      - -c
+      - >-
+        sed -i
+        -e 's/^authenticator:.*/authenticator: PasswordAuthenticator/'
+        -e 's/^authorizer:.*/authorizer: CassandraAuthorizer/'
+        /etc/cassandra/cassandra.yaml
+        && exec /usr/local/bin/docker-entrypoint.sh cassandra -f
+
     volumes: [ cassandra-data:/var/lib/cassandra ]
+
     healthcheck:
-      test: [ "CMD-SHELL", "cqlsh -e 'describe cluster' >/dev/null 2>&1 || exit 1" ]
+      test: [ "CMD-SHELL", "cqlsh -u \"$$CASSANDRA_BOOTSTRAP_USER\" -p \"$$CASSANDRA_BOOTSTRAP_PASSWORD\" -e 'describe cluster' >/dev/null 2>&1 || exit 1" ]
       interval: 10s
       retries: 30
       start_period: 60s
@@ -52,10 +67,15 @@ services:
     depends_on:
       cassandra:
         condition: service_healthy
+
+    env_file:
+      - .env
+
     volumes:
       - ./src/db/schema.cql:/schema.cql:ro
-    command: cqlsh ${CASSANDRA_HOSTS} 9042 -f /schema.cql
-    restart: on-failure
+      - ./src/db/init_db.sh:/init_db.sh:ro
+
+    command: [ "bash", "/init_db.sh" ]
 
 volumes:
   cassandra-data:
