@@ -1,5 +1,4 @@
 import io
-import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -19,13 +18,10 @@ from PIL import Image
 
 from src.config import checkpoint_path, load_config
 from src.db.cassandra_client import CassandraRepository, cassandra_repository
-from src.db.load_dataset import load_split
 from src.logger import get_logger
 from src.model import ModelNotLoadedError, classifier_service
 
 from .schemas import (
-    DatasetLoadRequest,
-    DatasetLoadResponse,
     HealthResponse,
     ModelInfoResponse,
     PredictionRecord,
@@ -44,25 +40,9 @@ def require_db() -> CassandraRepository:
     return cassandra_repository
 
 
-def _connect_database() -> None:
-    """
-    Подключение к Cassandra.
-
-    Вызывается в отдельном потоке: connect() блокирующий и делает ретраи
-    с паузами, а uvicorn начинает слушать порт только после завершения
-    lifespan-startup. Если ждать БД прямо здесь, health-check снаружи
-    получает reset соединения всё время, пока идут попытки.
-    """
-    try:
-        cassandra_repository.connect()
-        logger.info("Подключение к Cassandra установлено")
-    except Exception:
-        logger.exception("Cassandra недоступна, предсказания сохраняться не будут")
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Артефакт грузится один раз при старте."""
+    """Артефакт и подключение к БД поднимаются один раз при старте."""
     cfg = load_config()
 
     ckpt_path = str(checkpoint_path(cfg))
@@ -74,16 +54,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Ошибка загрузки модели: %s", ckpt_path)
 
-    db_thread = threading.Thread(
-        target=_connect_database,
-        name="cassandra-connect",
-        daemon=True,
-    )
-    db_thread.start()
+    try:
+        cassandra_repository.connect()
+    except Exception:
+        logger.exception("Cassandra недоступна, предсказания сохраняться не будут")
 
     yield
 
-    db_thread.join(timeout=5.0)
     cassandra_repository.shutdown()
     logger.info("Остановка сервиса и БД, очистка ресурсов.")
 
@@ -197,34 +174,10 @@ async def predict(
     "/predictions/{request_id}", response_model=PredictionRecord, tags=["predictions"]
 )
 async def read_prediction(request_id: uuid.UUID, repo=Depends(require_db)):
-    """Точечное чтение из predictions_by_id."""
+    """Точечное чтение результата модели из БД."""
     record = repo.get_prediction(request_id)
 
     if record is None:
         raise HTTPException(404, f"Предсказание {request_id} не найдено")
 
     return record
-
-
-@app.post("/admin/dataset", response_model=DatasetLoadResponse, tags=["admin"])
-async def load_dataset(request: DatasetLoadRequest):
-    """Заливает разбиение датасета в Cassandra."""
-    try:
-        loaded = load_split(split=request.split)
-    except (FileNotFoundError, ValueError) as exc:
-        logger.exception("Не удалось загрузить датасет")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
-        )
-    except Exception as exc:
-        logger.exception("Ошибка загрузки датасета в Cassandra")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Ошибка загрузки датасета: {exc}",
-        )
-
-    return DatasetLoadResponse(
-        loaded_rows=loaded,
-        split=request.split or "все",
-    )

@@ -20,7 +20,7 @@ fi
 
 if [ "$CASSANDRA_USER" = "$CASSANDRA_BOOTSTRAP_USER" ]; then
     echo "CASSANDRA_USER совпадает с CASSANDRA_BOOTSTRAP_USER: заведите" >&2
-    echo "для сервиса отдельную роль (например, emotion_app)" >&2
+    echo "для сервиса отдельную роль" >&2
     exit 1
 fi
 

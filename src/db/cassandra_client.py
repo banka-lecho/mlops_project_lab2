@@ -3,11 +3,10 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from cassandra import ConsistencyLevel
 from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 from cassandra.concurrent import execute_concurrent_with_args
-from cassandra.query import BatchStatement, dict_factory
+from cassandra.query import dict_factory
 
 from src.config import CassandraSettings, cassandra_settings
 from src.logger import get_logger
@@ -21,14 +20,6 @@ class CassandraNotConnectedError(Exception):
 
 class CassandraSchemaError(Exception):
     """Кластер доступен, но нужной схемы в нём нет."""
-
-
-def _to_plain(value: Any) -> Any:
-    """Приводит типы драйвера к обычным питоновским."""
-    if hasattr(value, "date") and not isinstance(value, datetime):
-        return value.date()
-
-    return value
 
 
 class CassandraRepository:
@@ -65,6 +56,7 @@ class CassandraRepository:
             password=settings.password,
         )
 
+        cluster = session = None
         last_error = None
 
         for attempt in range(1, settings.connect_retries + 1):
@@ -90,7 +82,8 @@ class CassandraRepository:
 
                 if attempt < settings.connect_retries:
                     time.sleep(settings.retry_delay_seconds)
-        else:
+
+        if session is None:
             raise CassandraNotConnectedError(
                 f"Не удалось подключиться к Cassandra за {settings.connect_retries} попыток"
             ) from last_error
@@ -110,16 +103,19 @@ class CassandraRepository:
         self._session = session
         self._cluster = cluster
 
-        self._prepare_statements()
+        try:
+            self._prepare_statements()
+        except Exception:
+            self.shutdown()
+            raise
 
         logger.info(
-            "Подключение к Cassandra установлено: keyspace=%s, попытка %s",
+            "Подключение к Cassandra установлено: keyspace=%s",
             settings.keyspace,
-            attempt,
         )
 
     def shutdown(self) -> None:
-        """Выключение клиенты: закрывает все сессии, созданные этим кластером, рвёт пулы TCP-соединений ко всем нодам."""
+        """Закрывает сессии кластера и рвёт пулы TCP-соединений ко всем нодам."""
         if self._cluster is not None:
             self._cluster.shutdown()
 
@@ -144,23 +140,14 @@ class CassandraRepository:
             "insert_prediction": session.prepare(
                 """
                 INSERT INTO predictions (
-                    prediction_day, created_at, request_id, image_name,
+                    request_id, created_at, image_name,
                     predicted_class, confidence, probabilities,
                     process_time_ms, model_checkpoint, device
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """
             ),
-            "insert_prediction_by_id": session.prepare(
-                """
-                INSERT INTO predictions_by_id (
-                    request_id, prediction_day, created_at, image_name,
-                    predicted_class, confidence, probabilities,
-                    process_time_ms, model_checkpoint, device
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            ),
-            "select_prediction_by_id": session.prepare(
-                "SELECT * FROM predictions_by_id WHERE request_id = ?"
+            "select_prediction": session.prepare(
+                "SELECT * FROM predictions WHERE request_id = ?"
             ),
             "insert_dataset_row": session.prepare(
                 """
@@ -186,31 +173,21 @@ class CassandraRepository:
         session = self._require_session()
 
         created_at = created_at or datetime.now(timezone.utc)
-        prediction_day = created_at.date()
-        confidence = float(probabilities.get(predicted_class, 0.0))
 
-        values = (
-            prediction_day,
-            created_at,
-            request_id,
-            image_name,
-            predicted_class,
-            confidence,
-            {key: float(value) for key, value in probabilities.items()},
-            float(process_time_ms),
-            model_checkpoint,
-            device,
+        session.execute(
+            self._statements["insert_prediction"],
+            (
+                request_id,
+                created_at,
+                image_name,
+                predicted_class,
+                float(probabilities.get(predicted_class, 0.0)),
+                {key: float(value) for key, value in probabilities.items()},
+                float(process_time_ms),
+                model_checkpoint,
+                device,
+            ),
         )
-
-        batch = BatchStatement(consistency_level=ConsistencyLevel.ONE)
-
-        batch.add(self._statements["insert_prediction"], values)
-        batch.add(
-            self._statements["insert_prediction_by_id"],
-            (values[2], values[0], values[1]) + values[3:],
-        )
-
-        session.execute(batch)
 
         logger.info(
             "Результат предсказания сохранён в Cassandra: request_id=%s, класс=%s",
@@ -225,38 +202,11 @@ class CassandraRepository:
         session = self._require_session()
 
         rows = session.execute(
-            self._statements["select_prediction_by_id"],
+            self._statements["select_prediction"],
             (request_id,),
         )
 
-        row = rows.one()
-
-        if row is None:
-            return None
-
-        return {key: _to_plain(value) for key, value in row.items()}
-
-    def save_dataset_row(
-        self,
-        split: str,
-        label: str,
-        image_name: str,
-        image_path: str,
-        loaded_at: datetime | None = None,
-    ) -> None:
-        """Одна строка обучающего или валидационного набора."""
-        session = self._require_session()
-
-        session.execute(
-            self._statements["insert_dataset_row"],
-            (
-                split,
-                label,
-                image_name,
-                image_path,
-                loaded_at or datetime.now(timezone.utc),
-            ),
-        )
+        return rows.one()
 
     def save_dataset_rows(
         self,

@@ -6,6 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+CONFIG_FILE = ROOT / "config.ini"
 
 load_dotenv(ROOT / ".env", override=False)
 
@@ -37,9 +38,8 @@ class CassandraSettings:
     keyspace: str
     username: str = field(repr=False)
     password: str = field(repr=False)
-    connect_retries: int = 6
-    retry_delay_seconds: float = 20.0
-    request_timeout_seconds: float = 20.0
+    connect_retries: int = 3
+    retry_delay_seconds: float = 2.0
 
 
 def cassandra_settings() -> CassandraSettings:
@@ -56,20 +56,14 @@ def cassandra_settings() -> CassandraSettings:
         keyspace=required_env("CASSANDRA_KEYSPACE"),
         username=required_env("CASSANDRA_USER"),
         password=required_env("CASSANDRA_PASSWORD"),
-        connect_retries=int(os.getenv("CASSANDRA_CONNECT_RETRIES", "6")),
-        retry_delay_seconds=float(os.getenv("CASSANDRA_RETRY_DELAY", "20.0")),
-        request_timeout_seconds=float(os.getenv("CASSANDRA_REQUEST_TIMEOUT", "20.0")),
+        connect_retries=int(os.getenv("CASSANDRA_CONNECT_RETRIES", "3")),
+        retry_delay_seconds=float(os.getenv("CASSANDRA_RETRY_DELAY", "2.0")),
     )
 
 
-def config_path() -> Path:
-    """Путь к config.ini."""
-    return Path(os.getenv("CONFIG_PATH", ROOT / "config.ini"))
-
-
 def load_config(path: Path | None = None) -> configparser.ConfigParser:
-    """Загрузка конфига."""
-    path = Path(path) if path else config_path()
+    """Загрузка config.ini: пути к данным и модели, никаких секретов."""
+    path = Path(path) if path else CONFIG_FILE
 
     if not path.exists():
         raise FileNotFoundError(f"config.ini не найден: {path}")
@@ -80,73 +74,29 @@ def load_config(path: Path | None = None) -> configparser.ConfigParser:
     return cfg
 
 
-def resolve(rel_path: Path) -> Path:
-    """Относительный путь из конфига -> абсолютный от корня репозитория."""
-    p = Path(rel_path)
+def path_from_config(
+    section: str,
+    key: str,
+    cfg: configparser.ConfigParser | None = None,
+) -> Path:
+    """Путь из config.ini; относительный отсчитывается от корня репозитория."""
+    cfg = cfg or load_config()
 
-    return p if p.is_absolute() else ROOT / p
+    raw_path = cfg[section].get(key, "").strip()
+
+    if not raw_path:
+        raise ValueError(f"{section}.{key} не указан в config.ini")
+
+    path = Path(raw_path)
+
+    return path if path.is_absolute() else ROOT / path
 
 
 def checkpoint_path(cfg: configparser.ConfigParser | None = None) -> Path:
-    """
-    Путь к чекпоинту обученного классификатора (.pth).
-
-    CHECKPOINT_PATH из окружения имеет приоритет над config.ini.
-    """
-    env = os.getenv("CHECKPOINT_PATH")
-
-    if env:
-        path = Path(env)
-    else:
-        cfg = cfg or load_config()
-
-        raw_path = cfg["MODEL"].get("checkpoint_path", "").strip()
-
-        if not raw_path:
-            raise ValueError("MODEL.checkpoint_path не указан в config.ini")
-
-        path = resolve(raw_path)
-
-    if not path.exists():
-        raise FileNotFoundError(f"Чекпоинт модели не найден по пути: {path}")
+    """Путь к чекпоинту обученного классификатора (.pth)."""
+    path = path_from_config("MODEL", "checkpoint_path", cfg)
 
     if not path.is_file():
-        raise ValueError(f"checkpoint_path должен указывать на файл чекпоинта: {path}")
+        raise FileNotFoundError(f"Чекпоинт модели не найден по пути: {path}")
 
     return path
-
-
-def images_path(cfg: configparser.ConfigParser | None = None) -> Path:
-    """Путь к изображениям"""
-    env = os.getenv("IMAGES_PATH")
-
-    if env:
-        return Path(env)
-
-    cfg = cfg or load_config()
-
-    return resolve(cfg["DATA"]["images_path"])
-
-
-def target_path(cfg: configparser.ConfigParser | None = None) -> Path:
-    """Путь к CSV с таргетами."""
-    env = os.getenv("TARGET_PATH")
-
-    if env:
-        return Path(env)
-
-    cfg = cfg or load_config()
-
-    return resolve(cfg["DATA"]["csv_path"])
-
-
-def split_path(cfg: configparser.ConfigParser | None = None) -> Path:
-    """Путь к CSV с разбиением на train/val/test."""
-    env = os.getenv("SPLIT_PATH")
-
-    if env:
-        return Path(env)
-
-    cfg = cfg or load_config()
-
-    return resolve(cfg["DATA"]["split_path"])

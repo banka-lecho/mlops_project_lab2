@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.config import path_from_config
 from src.logger import get_logger
-from src.config import target_path, split_path
 
 logger = get_logger(__name__)
 
@@ -33,8 +33,8 @@ def assign_split(image_name: str, train_share: int, val_share: int) -> str:
 
 
 def split_dataset(
-    csv_path: Path = None,
-    out_path: Path = None,
+    csv_path: Path | None = None,
+    out_path: Path | None = None,
     train_share: int = 70,
     val_share: int = 15,
 ) -> pd.DataFrame:
@@ -48,8 +48,8 @@ def split_dataset(
             f"На test не остаётся данных: train={train_share}, val={val_share}"
         )
 
-    csv_path = Path(csv_path) if csv_path else target_path()
-    out_path = Path(out_path) if out_path else split_path()
+    csv_path = Path(csv_path) if csv_path else path_from_config("DATA", "csv_path")
+    out_path = Path(out_path) if out_path else path_from_config("DATA", "split_path")
 
     df = pd.read_csv(csv_path)
 
@@ -88,24 +88,27 @@ def split_dataset(
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Разбить датасет на train/val/test."
+    parser = argparse.ArgumentParser(description="Разбить датасет на train/val/test.")
+    parser.add_argument(
+        "--csv-path",
+        type=Path,
+        default=None,
+        help="CSV с таргетами (по умолчанию — из config.ini).",
     )
     parser.add_argument(
-        "--csv-path", type=Path, default=None,
-        help="CSV с таргетами (по умолчанию — из config.ini)."
+        "--out-path",
+        type=Path,
+        default=None,
+        help="Куда сохранить разбиение (по умолчанию — из config.ini).",
     )
     parser.add_argument(
-        "--out-path", type=Path, default=None,
-        help="Куда сохранить разбиение (по умолчанию — из config.ini)."
+        "--train-share", type=int, default=70, help="Доля train в процентах."
     )
     parser.add_argument(
-        "--train-share", type=int, default=70,
-        help="Доля train в процентах."
-    )
-    parser.add_argument(
-        "--val-share", type=int, default=15,
-        help="Доля val в процентах; на test уходит остаток."
+        "--val-share",
+        type=int,
+        default=15,
+        help="Доля val в процентах; на test уходит остаток.",
     )
 
     return parser
